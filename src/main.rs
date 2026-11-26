@@ -25,7 +25,10 @@ enum Commands {
     /// Print a page's content by title.
     Show { title: String },
     /// Save index to JSON.
-    Save { #[arg(long)] file: Option<PathBuf> },
+    Save {
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
     /// Load and query a saved index.
     Load { file: PathBuf },
 }
@@ -36,8 +39,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Commands::Build => {
             let idx = WikiIndex::build(&cli.root)?;
-            println!("indexed {} pages in {} categories",
-                idx.pages.len(), idx.by_category().len());
+            println!(
+                "indexed {} pages in {} categories",
+                idx.pages.len(),
+                idx.by_category().len()
+            );
         }
         Commands::Search { query } => {
             let idx = WikiIndex::build(&cli.root)?;

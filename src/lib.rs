@@ -89,8 +89,7 @@ impl WikiIndex {
         self.pages
             .iter()
             .filter(|p| {
-                p.title.to_lowercase().contains(&q)
-                    || p.content.to_lowercase().contains(&q)
+                p.title.to_lowercase().contains(&q) || p.content.to_lowercase().contains(&q)
             })
             .collect()
     }
