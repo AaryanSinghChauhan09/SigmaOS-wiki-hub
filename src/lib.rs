@@ -53,12 +53,17 @@ fn extract_title(path: &Path, content: &str) -> String {
 
 /// Guess category from path components (first dir under root, else "general").
 fn extract_category(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .ok()
-        .and_then(|p| p.components().next())
-        .and_then(|c| c.as_os_str().to_str())
-        .unwrap_or("general")
-        .to_string()
+    let rel = match path.strip_prefix(root) {
+        Ok(p) => p,
+        Err(_) => return "general".to_string(),
+    };
+    let mut comps = rel.components();
+    match (comps.next(), comps.next()) {
+        // File inside a subdirectory: first component is the category dir.
+        (Some(dir), Some(_)) => dir.as_os_str().to_str().unwrap_or("general").to_string(),
+        // File directly under root has no category dir.
+        _ => "general".to_string(),
+    }
 }
 
 impl WikiIndex {
@@ -142,4 +147,86 @@ impl WikiIndex {
 pub fn default_index_path() -> Option<PathBuf> {
     directories::ProjectDirs::from("org", "sigmaos", "sigmaos")
         .map(|p| p.cache_dir().join("wiki-hub").join("index.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("kernel")).unwrap();
+        fs::create_dir_all(dir.path().join("shell")).unwrap();
+        fs::write(
+            dir.path().join("kernel/PROCESS.md"),
+            "# Process Model\n\nHow SigmaOS schedules processes.\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("shell/BUILTINS.md"),
+            "# Builtins\n\nShell builtin reference.\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("README.txt"), "not markdown\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn build_indexes_markdown_only() {
+        let dir = fixture();
+        let idx = WikiIndex::build(dir.path()).unwrap();
+        assert_eq!(idx.pages.len(), 2);
+        // Sorted by title.
+        assert_eq!(idx.pages[0].title, "Builtins");
+        assert_eq!(idx.pages[1].title, "Process Model");
+        // Category = first path component under root.
+        assert_eq!(idx.pages[0].category, "shell");
+        assert_eq!(idx.pages[1].category, "kernel");
+    }
+
+    #[test]
+    fn title_falls_back_to_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("notes.md"), "no heading here\n").unwrap();
+        let idx = WikiIndex::build(dir.path()).unwrap();
+        assert_eq!(idx.pages[0].title, "notes");
+        assert_eq!(idx.pages[0].category, "general");
+    }
+
+    #[test]
+    fn search_is_case_insensitive() {
+        let dir = fixture();
+        let idx = WikiIndex::build(dir.path()).unwrap();
+        assert_eq!(idx.search("SCHEDUL").len(), 1);
+        assert_eq!(idx.search("builtin").len(), 1);
+        assert!(idx.search("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn by_category_get_and_toc() {
+        let dir = fixture();
+        let idx = WikiIndex::build(dir.path()).unwrap();
+        let cats = idx.by_category();
+        assert_eq!(cats.len(), 2);
+        assert_eq!(cats["kernel"].len(), 1);
+        let page = idx.get("Process Model").unwrap();
+        assert!(page.content.contains("schedules"));
+        let toc = idx.toc();
+        assert!(toc.contains("## kernel"));
+        assert!(toc.contains("**Process Model**"));
+    }
+
+    #[test]
+    fn save_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = fixture();
+        let idx = WikiIndex::build(src.path()).unwrap();
+        let path = dir.path().join("index.json");
+        idx.save(&path).unwrap();
+        let loaded = WikiIndex::load(&path).unwrap();
+        assert_eq!(loaded.pages.len(), 2);
+        assert_eq!(loaded.pages[0].title, "Builtins");
+        assert!(WikiIndex::load(&dir.path().join("missing.json")).is_err());
+    }
 }
